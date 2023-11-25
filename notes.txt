@@ -1,0 +1,219 @@
+Tue 7th November, 2023
+----------------------
+
+Having a go at using Ruby and SDL to create an alarm clock on a 7" touchscreen.
+
+There's a Ruby Gem called ruby-sdl but it's quite old and may well target only
+SDL version 1.  However I notice there is also a ruby-sdl2 and quite a few
+others in the same vein.  First problem is which to choose.
+
+Ah - ruby-sdl2 seems more active with commits only 6 months ago (compared to 8
+years for ruby-sdl).  Seems a fair bet.
+
+It specifies that I need to pre-install:
+
+SDL 2.x
+SDL_image
+SDL_mixer
+SDL_ttf
+
+I went for the Debian packages called libsdl2-image-dev etc.  Then created a
+Gemfile listing only ruby-sdl2 and did a bundle install.  Seems to have
+compiled successfully.  The documentation linked from the git repository is
+very poor.  ISTR there was something better with ruby-sdl - a whole pile of
+examples.  Presumably they might have maintained something of the same
+interface.
+
+Start by trying to blank the screen, then draw some text or a shape.
+
+Ah - there still seem to be samples with SDL2.  Try and run some.
+
+Interestingly the samples use ancillary files (like ttf files and wav files)
+which aren't included in the repository.  Silly.
+
+
+Fri 10th November, 2023
+-----------------------
+
+Returning to this.  How does one blank the screen?  Try for a colour first,
+then black.
+
+One interesting question - what size is my screen?  Check on the PiHut web
+site.
+
+It's this one:
+
+  https://thepihut.com/products/7-touch-display-kit-for-raspberry-pi-zero
+
+and apparently is 1024 x 600.  By default it's 1024 wide but presumably one
+could choose to have it the other way about.  That may be why the fonts looked
+so bad in the test program since it used 640 x 480.  Was it then scaled?
+
+Interesting point to note - as soon as my program exits the screen is restored
+to what it was before.  Need to learn how this works.
+
+Just discovered that there is an alternative to SDL2 called OpenGL which does
+the same sort of thing and also has Ruby bindings.  Apparently you can even
+mix and match.  https://stackoverflow.com/questions/29064904/how-to-render-fonts-and-text-with-sdl2-efficiently
+
+I'll stick to SDL2 for now.
+
+The whole business of writing to the screen seems curiously convoluted
+(doubtless for good reasons) but then also lacks sensible documentation.  It's
+assumed that you'll just pick it up as you go along.
+
+It seems you render the text to a "surface" and then create a "texture" which
+you copy to your "renderer" and then that displays to the screen.
+
+Try some cut-n-paste code and see whether it works.
+
+Very odd.  It seems that when you load a font you specify a font size but I
+find that the smaller a number I specify the bigger and blockier the text.
+This presumably means that something else then scales it up to fit an implied
+area.
+
+For some odd reason, my text always starts well off to the left of the screen.
+
+Apparently create_texture_from creates a texture from an existing surface.
+Therefore by implication Font#render_solid must return a surface.
+
+  Font => Surface => Texture => Renderer => Screen
+
+Yes, indeed it does.  Now according to my font library, the natural size of my
+bit of text - "Hello, World" is currently 1623 by 300 (font loaded at a font
+size of 300 so that's logical).  I am then apparently copying it into a
+rectangle on my screen of size 400 by 200.
+
+Try making the font just 100 to start with.  Size is now 542 x 100.  Looks
+less smooth though.  Try 300 again.
+
+Interesting - I've done it with 100, 200 and 300 and they all differ slightly
+but none looks that great.  Perhaps the problem is the fact that I'm scaling
+them later.  I should render them the exact size they're wanted and then leave
+it at that.  They all appear exactly the same size so clearly there is some
+later scaling going on.  Need to break off shortly to go to the food bank.
+
+
+Sat 11th Nov, 2023
+------------------
+
+I think I know what's going on with the screen preservation.  The library
+actually switches the screen to a different mode - graphics mode - just like
+you get with an X screen as well as several text screens.  The mouse pointer
+appears too.
+
+I'm not sure that the resolution of this screen is correct.  My text of width
+817 sticks off both sides.  Could it be only 800 wide?  Can I query the actual
+size?  That would also explain why a left offset of only 100  means it starts
+off the left of the screen.  I have a window of size 1024 and it's centred on
+a screen of 800.  Try it.
+
+I could do a coloured rectangle and display it centred on the screen, then
+adjust its size until it exactly fills it.
+
+If I do:
+
+  require 'sdl2'
+  SDL2.init(SDL2::INIT_VIDEO)
+  d = SDL2::Display.displays[0]
+  d.current_mode
+
+I seem to get a screen resolution of 720 x 576.  Maybe though that is just the
+current mode.  It seems you can set other modes.  How do you set the mode?  If
+my display can genuinely do 1024 x 600 then I will probably get the best
+rendering by using that mode.
+
+Found this explanation on the line:
+
+You can get a list of valid screen resolutions using SDL_GetDisplayMode. Then you can change the current screen resolution using SDL_SetWindowDisplayMode. Please note that this only works in fullscreen mode (SDL_SetWindowFullscreen). To change the size of a window use SDL_SetWindowSize. Whether or not you have to recreate your renderer I am not sure, but as SDL2 uses OpenGL I'd say probably not. You will have to react to the change of the viewport though.
+
+Need to work out how those map into the Ruby SDL library.  URL where I found
+it is: https://www.gamedev.net/forums/topic/678781-how-do-i-change-screen-resolutions-at-runtime-using-sdl2/5292601/
+
+It's amazing how many layers you have to get through.
+
+I've also established that basically the whole of the sdl2_ruby library is
+written in C.  Most work out how this is done.
+
+Let's put the screen resolution issue to one side for now.  Later on I will
+experiment with how to change the screen resolution but for now I will work
+with whatever it starts as.
+
+What I need to do then is get the time appearing in the centre of the screen
+in a reasonably nicely presented way.  The next step would be to turn it into
+a screen saver version after a certain length of time.  Screen saver version
+would be smaller, fainter and move around the screen, a bit like my phone does
+at present.
+
+
+Sun 12th November, 2023
+-----------------------
+
+Trying to impose some good structure on my program.  It's quite tricky because
+the existing library facilities are a bit higgledy-posh.  Do the best I can.
+
+
+Mon 13th November, 2023
+-----------------------
+
+Two points arise this morning:
+
+1) If I try to use small fonts they look pretty naff.  I suspect this may be
+something to do with the fact that they're being scaled after rendering.
+Perhaps re-visit the idea of changing the screen size?  Are they in fact still
+being scaled though?  Or is it perhaps just that I'm writing to the screen at
+a non-native resolution?
+
+2) The mouse library returns values between 0.0 and 1.0 for co-ordinates.
+Could I adopt this in all my code and do everything in fractions of the screen
+size?  I ask for a font 0.15 of the screen size and then my font loading code
+works out the appropriate height.  It would mean that the code moved more
+readily to different sized screens.  Currently I have hard-coded numbers to
+suit this particular screen.
+
+Hmm - whilst it seems that the Ruby library includes methods to read display
+modes it doesn't let you set them - AFAICS.
+
+
+Wed 15th November, 2023
+-----------------------
+
+Plan of action:
+
+[*] Check what exact version of ruby-sdl2 I have as a Gem
+[*] Check it out from github to my Zero2W
+[*] See whether setting my window full screen and giving it the right size
+    has any useful effect.
+[*] Build from source
+[x] Remove gem (temporarily)
+[x] Use my source version
+[x] Add code to allow setting of screen resolution
+
+I seem to have version 0.3.6 and it does not include any calls on the
+necessary SetWindowDisplayMode method.  This is what I may need to add.
+
+"rake gem" seems to package up a gem from the files and "rake build" builds
+the necessary shared object.
+
+Interesting - that might even have worked.  If I hard code the window size as
+1024 x 600 and then set the window flag for full screen I do seem to get a
+mode change.  My existing stuff appears on the screen but smaller and off
+centre.
+
+Yes it works - quote:
+
+Initial width and height 720, 576
+Final width and height 1024, 600
+
+That means I don't need to do any compiling at all.  Nice to know I can
+though.
+
+I'm wondering whether to add occasional deliberate garbage collection - say
+once a minute.  It does still seem to grow.
+
+Yes, it looks much better now.  I'm still not convinced about this font for
+small text though, but at least it looks OK.  Changing fonts is easy.
+
+Now can I make it make a noise?
+
+# vim: set tw=78 :

@@ -1,0 +1,13 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    ruby-sdl2 (0.3.6)
+
+PLATFORMS
+  aarch64-linux
+
+DEPENDENCIES
+  ruby-sdl2
+
+BUNDLED WITH
+   2.4.1
