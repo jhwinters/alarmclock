@@ -8,6 +8,53 @@ require 'sdl2'
 require 'time'
 require 'yaml'
 
+class Despatcher
+  #
+  #  An object which will poll for SDL2 events and dispatch them according to
+  #  requests from other objects.
+  #
+
+  class Request
+    attr_reader :type, :recipient
+
+    def initialize(type, recipient)
+      @type = type
+      @recipient = recipient
+    end
+  end
+
+  def initialize
+    @requests = []
+  end
+
+  def register(type, recipient)
+    # type should be a class of event
+    # recipient should be an object with a handle_event() method
+    # 
+    # This method of storing the registrations is not efficient and
+    # can be improved later by being made more structured.
+    #
+    puts "Registering"
+    @requests << Request.new(type, recipient)
+  end
+
+  def despatch
+    puts "Despatch starting"
+    while true
+      event = SDL2::Event.poll
+      if event
+        puts event.inspect
+      end
+      @requests.each do |request|
+        if request.type === event
+          request.recipient.handle_event(event)
+        end
+      end
+      sleep(0.1)
+    end
+  end
+end
+
 class Config
   #
   #  A class to load a config file and provide defaults.
@@ -353,8 +400,6 @@ class MyDisplay
 #    while SDL2::Mixer::Channels.play?(0)
 #      sleep 1
 #    end
-    alarms = YAML.load_file('alarms.yaml')
-    puts alarms.inspect
   end
 
   def blank_buffer
@@ -418,7 +463,7 @@ class AlarmClock
   PLAIN_FONT_SIZE = 50
   SMALL_FONT_SIZE = 32
 
-  def initialize(config, my_display)
+  def initialize(config, my_display, despatcher)
     #
     #  First we want to know how big our display is.
     #
@@ -443,6 +488,13 @@ class AlarmClock
     SDL2::Mixer::Channels.set_volume(0, 128)
     SDL2::Mixer::Channels.fade_in(0, @alarm_sound, 0, 600)
     @sounding = true
+    #
+    #  What events do we need?
+    #
+    despatcher.register(nil, self)  # For now until timers implemented
+    despatcher.register(SDL2::Event::FingerDown, self)
+    despatcher.register(SDL2::Event::KeyDown, self)
+
   end
 
   def ordinalize(number)
@@ -465,6 +517,10 @@ class AlarmClock
   end
 
   def handle_event(event)
+    if event
+      puts "In handle_event"
+      puts event.inspect
+    end
     case event
     when SDL2::Event::FingerDown
       @last_touched_time = Time.now
@@ -545,9 +601,20 @@ end
 #
 #  Start of main code
 #
+puts "Getting config"
 config = Config.new
+puts "Creating despatcher"
+despatcher = Despatcher.new
+puts "Initalising display"
 my_display = MyDisplay.new(config)
-alarm_clock = AlarmClock.new(config, my_display)
+puts "Creating alarm clock"
+alarm_clock = AlarmClock.new(config, my_display, despatcher)
+puts "Starting despatcher"
+#despatcher.despatch()
+
+#
+#  Should not get here.
+#
 iterations = 0
 while true
   event = SDL2::Event.poll

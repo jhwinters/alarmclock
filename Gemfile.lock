@@ -5,6 +5,7 @@ GEM
 
 PLATFORMS
   aarch64-linux
+  armv7l-linux-eabihf
 
 DEPENDENCIES
   ruby-sdl2

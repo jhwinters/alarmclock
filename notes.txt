@@ -214,6 +214,33 @@ once a minute.  It does still seem to grow.
 Yes, it looks much better now.  I'm still not convinced about this font for
 small text though, but at least it looks OK.  Changing fonts is easy.
 
-Now can I make it make a noise?
+Now can I make it make a noise?  Yes, I can.
+
+
+Tue 28th Nov, 2023
+------------------
+
+Had a busy couple of weeks and made pretty much no progress, but established
+some interesting things.
+
+* Touch events use a scale of 0.0-1.0 for both X and Y.  Presumably because
+  they don't know the screen resolution.
+* Mouse click events use pixel coordinates.
+* SDL2 includes timer functions but my library exposes only the hi-res ones
+  and not the basic SetTimer functions.  I'm not sure they offer any
+  advantages over using Ruby timers.
+* I could do with a proper event despatcher which handles the main loop, with
+  client code registering interests and receiving appropriate events.
+* I could also switch to doing all my sizing and positioning using 0.0-1.0 as
+  well which might make the whole thing scale better to different sized
+  screens.
+* The code should cope with no resolution in the config file, thus using
+  whatever resolution the screen starts up with.
+
+Lots of things to play with.
+
+Perhaps an event despatcher first.
+
+
 
 # vim: set tw=78 :
