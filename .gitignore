@@ -5,3 +5,4 @@ config.yaml.org
 config.yaml
 *.o
 *.bak
+clock
