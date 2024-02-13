@@ -2,13 +2,7 @@
  * Alarm clock re-written in C
  */
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <yaml.h>
-#include "global.h"
-#include "linklist.h"
-#include "settings.h"
+#include "includes.h"
 
 /*
  *================================================================
@@ -38,6 +32,7 @@
 
 int main(void) {
   parse_config();
+  dump_settings();
   printf("Hello, World!\n");
   return 0;
 }

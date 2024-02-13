@@ -1,10 +1,15 @@
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <yaml.h>
-#include "global.h"
-#include "settings.h"
+#include "includes.h"
+
+/*
+ *================================================================
+ *
+ *  Constants
+ *
+ *================================================================
+ */
+
+#define MAX_STRING_LENGTH 128
 
 /*
  *================================================================
@@ -29,7 +34,10 @@ typedef enum {
   had_alarms,
   in_alarms,
   in_alarm,
-  had_alarm_setting
+  had_alarm_time,
+  had_alarm_days,
+  in_alarm_days,
+  finished
 } t_parsing_state;
 
 typedef enum {
@@ -56,6 +64,22 @@ typedef enum {
 /*
  *================================================================
  *
+ *  Local data.
+ *
+ *================================================================
+ */
+
+static char title[MAX_STRING_LENGTH + 1] = "<Unset>";
+static char sound_file_name[MAX_STRING_LENGTH + 1] = "<Unset>";
+static int screen_width = -1;
+static int screen_height = -1;
+static int dim_delay = -1;
+static int bright_value = -1;
+static int dim_value = -1;
+
+/*
+ *================================================================
+ *
  *  Forward declarations
  *
  *================================================================
@@ -71,8 +95,6 @@ static bool a_font_size(t_known_keyword keyword);
 
 static bool a_font_setting(t_known_keyword keyword);
 
-static bool an_alarm_setting(t_known_keyword keyword);
-
 static bool store_away(
     t_known_keyword    keyword,
     const yaml_char_t *value);
@@ -81,6 +103,13 @@ static bool save_font_detail(
     t_known_keyword font_size,
     t_known_keyword attribute,
     const yaml_char_t *value);
+
+static void safe_copy(
+    char       *dest,
+    const char *src,
+    const char *setting);
+
+static int integer(const char *string);
 
 /*
  *================================================================
@@ -91,11 +120,14 @@ static bool save_font_detail(
  */
 
 bool parse_config(void) {
+  t_individual_alarm    building_alarm;
   FILE                 *config_file;
   bool                  done = FALSE;
   yaml_event_t          event;
   t_known_keyword       font_size = k_unknown;
   bool                  handled;
+  int                   i;
+  int                   index;
   t_known_keyword       keyword = k_unknown;
   yaml_parser_t         parser;
   t_parsing_state       parsing_state = initial;
@@ -103,14 +135,16 @@ bool parse_config(void) {
 
   config_file = fopen("config.yaml", "r");
   if (config_file == NULL) {
-    fprintf(stderr, "Failed to open configuration file.\n");
+    LOG_Error("Failed to open configuration file.\n");
   } else {
     yaml_parser_initialize(&parser);
     yaml_parser_set_input_file(&parser, config_file);
     while (!done) {
       if (yaml_parser_parse(&parser, &event)) {
         handled = FALSE;
-        printf("Current state is \"%s\".\n", state_text(parsing_state));
+        /*
+        LOG_Debug("Current state is \"%s\".\n", state_text(parsing_state));
+        */
         switch (parsing_state) {
           case initial:
             switch (event.type) {
@@ -120,7 +154,6 @@ bool parse_config(void) {
                 break;
 
               case YAML_DOCUMENT_START_EVENT:
-                printf("Started.\n");
                 parsing_state = started;
                 handled = TRUE;
                 break;
@@ -154,6 +187,11 @@ bool parse_config(void) {
                   parsing_state = had_alarms;
                   handled = TRUE;
                 }
+                break;
+
+              case YAML_MAPPING_END_EVENT:
+                parsing_state = finished;
+                handled = TRUE;
                 break;
 
               default:
@@ -317,9 +355,18 @@ bool parse_config(void) {
             switch (event.type) {
               case YAML_MAPPING_START_EVENT:
                 /*
-                 * Should zero the alarm parameters here.
+                 * Zero the alarm parameters.
                  */
+                building_alarm.trigger_time = -1;  /* Invalid */
+                for (i = 0; i < 7; i++) {
+                  building_alarm.days[i] = TRUE;   /* Default to all days */
+                }
                 parsing_state = in_alarm;
+                handled = TRUE;
+                break;
+
+              case YAML_SEQUENCE_END_EVENT:
+                parsing_state = outer_mapping;
                 handled = TRUE;
                 break;
 
@@ -333,8 +380,28 @@ bool parse_config(void) {
             switch (event.type) {
               case YAML_SCALAR_EVENT:
                 keyword = identify_keyword(event.data.scalar.value);
-                if (an_alarm_setting(keyword)) {
-                  parsing_state = had_alarm_setting;
+                if (keyword == k_time) {
+                  parsing_state = had_alarm_time;
+                  handled = TRUE;
+                } else if (keyword == k_days) {
+                  /*
+                   * Hitting this keyword makes them all default to off.
+                   */
+                  for (i = 0; i < 7; i++) {
+                    building_alarm.days[i] = FALSE;
+                  }
+                  parsing_state = had_alarm_days;
+                  handled = TRUE;
+                }
+                break;
+
+              case YAML_MAPPING_END_EVENT:
+                if (add_alarm(building_alarm)) {
+                  building_alarm.trigger_time = -1;  /* Invalid */
+                  for (i = 0; i < 7; i++) {
+                    building_alarm.days[i] = TRUE;   /* Default to all days */
+                  }
+                  parsing_state = in_alarms;
                   handled = TRUE;
                 }
                 break;
@@ -345,7 +412,72 @@ bool parse_config(void) {
             }
             break;
 
-          default:
+          case had_alarm_time:
+            switch (event.type) {
+              case YAML_SCALAR_EVENT:
+                building_alarm.trigger_time =
+                  interpret_alarm_time(event.data.scalar.value);
+                if (building_alarm.trigger_time != -1) {
+                  parsing_state = in_alarm;
+                  handled = TRUE;
+                }
+                break;
+
+              default:
+                break;
+
+            }
+            break;
+
+          case had_alarm_days:
+            switch (event.type) {
+              case YAML_SEQUENCE_START_EVENT:
+                parsing_state = in_alarm_days;
+                handled = TRUE;
+                break;
+
+              default:
+                break;
+
+            }
+            break;
+
+          case in_alarm_days:
+            switch (event.type) {
+              case YAML_SCALAR_EVENT:
+                index = identify_alarm_day(event.data.scalar.value);
+                if (index != -1) {
+                  building_alarm.days[index] = TRUE;
+                  handled = TRUE;
+                }
+                break;
+
+              case YAML_SEQUENCE_END_EVENT:
+                parsing_state = in_alarm;
+                handled = TRUE;
+                break;
+
+              default:
+                break;
+
+            }
+            break;
+
+          case finished:
+            switch (event.type) {
+              case YAML_DOCUMENT_END_EVENT:
+                handled = TRUE;
+                break;
+
+              case YAML_STREAM_END_EVENT:
+                handled = TRUE;
+                done = TRUE;
+                break;
+
+              default:
+                break;
+
+            }
             break;
 
         }
@@ -356,57 +488,57 @@ bool parse_config(void) {
           switch (event.type) {
 
             case YAML_STREAM_START_EVENT:
-              printf("Stream start.\n");
+              LOG_Debug("Stream start.\n");
               break;
 
             case YAML_STREAM_END_EVENT:
-              printf("Stream end.\n");
+              LOG_Debug("Stream end.\n");
               done = TRUE;
               break;
 
             case YAML_DOCUMENT_START_EVENT:
-              printf("Document start.\n");
+              LOG_Debug("Document start.\n");
               break;
 
             case YAML_DOCUMENT_END_EVENT:
-              printf("Document end.\n");
+              LOG_Debug("Document end.\n");
               break;
 
             case YAML_ALIAS_EVENT:
-              printf("Alias event.\n");
+              LOG_Debug("Alias event.\n");
               break;
 
             case YAML_SCALAR_EVENT:
-              printf("Scalar event.\n");
-  /*            printf("Anchor - %s\n", event.data.scalar.anchor);        */
-  /*            printf("Tag    - %s\n", event.data.scalar.tag);           */
-              printf("Value  - %s\n", event.data.scalar.value);
+              LOG_Debug("Scalar event.\n");
+  /*            LOG_Debug("Anchor - %s\n", event.data.scalar.anchor);        */
+  /*            LOG_Debug("Tag    - %s\n", event.data.scalar.tag);           */
+              LOG_Debug("Value  - %s\n", event.data.scalar.value);
               break;
 
             case YAML_SEQUENCE_START_EVENT:
-              printf("Sequence start event.\n");
+              LOG_Debug("Sequence start event.\n");
               break;
 
             case YAML_SEQUENCE_END_EVENT:
-              printf("Sequence end event.\n");
+              LOG_Debug("Sequence end event.\n");
               break;
 
             case YAML_MAPPING_START_EVENT:
-              printf("Mapping start event.\n");
-              printf("Anchor - %s\n", event.data.mapping_start.anchor);
-              printf("Tag    - %s\n", event.data.mapping_start.tag);
+              LOG_Debug("Mapping start event.\n");
+              LOG_Debug("Anchor - %s\n", event.data.mapping_start.anchor);
+              LOG_Debug("Tag    - %s\n", event.data.mapping_start.tag);
               break;
 
             case YAML_MAPPING_END_EVENT:
-              printf("Mapping end event.\n");
+              LOG_Debug("Mapping end event.\n");
               break;
 
             default:
-              printf("Got event %d\n", event.type);
+              LOG_Debug("Got event %d\n", event.type);
               break;
 
           }
-          printf("Final state is \"%s\".\n", state_text(parsing_state));
+          LOG_Debug("Final state is \"%s\".\n", state_text(parsing_state));
           exit(EXIT_FAILURE);
         }       /* !handled */
       } else {
@@ -419,6 +551,21 @@ bool parse_config(void) {
     yaml_parser_delete(&parser);
   }
   return result;
+}
+
+void dump_settings(void) {
+  /*
+   *  Print out all the settings for debug purposes.
+   */
+  LOG_Debug("Title - \"%s\"\n", title);
+  LOG_Debug("Sound file name - \"%s\"\n", sound_file_name);
+  LOG_Debug("Screen width - %d\n", screen_width);
+  LOG_Debug("Screen height - %d\n", screen_height);
+  LOG_Debug("Dim delay - %d\n", dim_delay);
+  LOG_Debug("Bright value - %d\n", bright_value);
+  LOG_Debug("Dim value - %d\n", dim_value);
+
+  dump_alarms();
 }
 
 /*
@@ -445,7 +592,10 @@ static const char *state_text(t_parsing_state state) {
     "had_alarms",
     "in_alarms",
     "in_alarm",
-    "had_alarm_setting"
+    "had_alarm_time",
+    "had_alarm_days",
+    "in_alarm_days",
+    "finished"
   };
 
   return texts[state];
@@ -494,9 +644,13 @@ static bool setting_keyword(t_known_keyword keyword) {
   /*
    * Is this keyword one for an individual setting?
    */
-  return (keyword != k_settings) &&
-         (keyword != k_fonts) &&
-         (keyword != k_unknown);
+  return (keyword == k_title) ||
+         (keyword == k_screen_width) ||
+         (keyword == k_screen_height) ||
+         (keyword == k_alarm_sound_file) ||
+         (keyword == k_dim_delay) ||
+         (keyword == k_bright) ||
+         (keyword == k_dim);
 }
 
 
@@ -519,16 +673,50 @@ static bool a_font_setting(t_known_keyword keyword) {
 }
 
 
-static bool an_alarm_setting(t_known_keyword keyword) {
-  return (keyword == k_time) ||
-         (keyword == k_days);
-}
-
 static bool store_away(
     t_known_keyword    keyword,
     const yaml_char_t *value) {
 
-  return TRUE;
+  int   result = TRUE;
+  char *ptr;
+
+  ptr = (char *) value;
+  switch (keyword) {
+    case k_title:
+      safe_copy(title, ptr, "Title");
+      break;
+
+    case k_screen_width:
+      screen_width = integer(ptr);
+      break;
+
+    case k_screen_height:
+      screen_height = integer(ptr);
+      break;
+
+    case k_alarm_sound_file:
+      safe_copy(sound_file_name, ptr, "Sound file name");
+      break;
+
+    case k_dim_delay:
+      dim_delay = integer(ptr);
+      break;
+
+    case k_bright:
+      bright_value = integer(ptr);
+      break;
+
+    case k_dim:
+      dim_value = integer(ptr);
+      break;
+
+
+    default:
+      result = FALSE;
+      break;
+
+  }
+  return result;
 }
 
 
@@ -540,5 +728,23 @@ static bool save_font_detail(
 }
 
 
+static void safe_copy(
+    char       *dest,
+    const char *src,
+    const char *setting) {
+
+  if (strlen(src) > MAX_STRING_LENGTH) {
+    LOG_Warning("Setting \"%s\" truncated.\n", setting);
+    strncpy(dest, src, MAX_STRING_LENGTH);
+    dest[MAX_STRING_LENGTH] = '\0';
+  } else {
+    strcpy(dest, src);
+  }
+}
+
+
+static int integer(const char *string) {
+  return (int) strtol(string, NULL, 10);
+}
 
 
