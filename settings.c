@@ -9,7 +9,7 @@
  *================================================================
  */
 
-#define MAX_STRING_LENGTH 128
+#define MAX_STRING_LENGTH 80
 
 /*
  *================================================================
@@ -100,16 +100,9 @@ static bool store_away(
     const yaml_char_t *value);
 
 static bool save_font_detail(
-    t_known_keyword font_size,
+    t_known_keyword font_size_kw,
     t_known_keyword attribute,
     const yaml_char_t *value);
-
-static void safe_copy(
-    char       *dest,
-    const char *src,
-    const char *setting);
-
-static int integer(const char *string);
 
 /*
  *================================================================
@@ -124,7 +117,7 @@ bool parse_config(void) {
   FILE                 *config_file;
   bool                  done = FALSE;
   yaml_event_t          event;
-  t_known_keyword       font_size = k_unknown;
+  t_known_keyword       font_size_kw = k_unknown;
   bool                  handled;
   int                   i;
   int                   index;
@@ -270,7 +263,7 @@ bool parse_config(void) {
               case YAML_SCALAR_EVENT:
                 keyword = identify_keyword(event.data.scalar.value);
                 if (a_font_size(keyword)) {
-                  font_size = keyword;
+                  font_size_kw = keyword;
                   parsing_state = had_font_size;
                   handled = TRUE;
                 }
@@ -324,7 +317,7 @@ bool parse_config(void) {
           case had_font_item:
             switch (event.type) {
               case YAML_SCALAR_EVENT:
-                if (save_font_detail(font_size,
+                if (save_font_detail(font_size_kw,
                                      keyword,
                                      event.data.scalar.value)) {
                   parsing_state = in_font;
@@ -565,6 +558,7 @@ void dump_settings(void) {
   LOG_Debug("Bright value - %d\n", bright_value);
   LOG_Debug("Dim value - %d\n", dim_value);
 
+  dump_fonts();
   dump_alarms();
 }
 
@@ -683,7 +677,7 @@ static bool store_away(
   ptr = (char *) value;
   switch (keyword) {
     case k_title:
-      safe_copy(title, ptr, "Title");
+      safe_copy(title, ptr, MAX_STRING_LENGTH, "Title");
       break;
 
     case k_screen_width:
@@ -695,7 +689,7 @@ static bool store_away(
       break;
 
     case k_alarm_sound_file:
-      safe_copy(sound_file_name, ptr, "Sound file name");
+      safe_copy(sound_file_name, ptr, MAX_STRING_LENGTH, "Sound file name");
       break;
 
     case k_dim_delay:
@@ -721,30 +715,25 @@ static bool store_away(
 
 
 static bool save_font_detail(
-    t_known_keyword font_size,
+    t_known_keyword font_size_kw,
     t_known_keyword attribute,
     const yaml_char_t *value) {
-  return TRUE;
-}
 
+  t_font_size font_size;
 
-static void safe_copy(
-    char       *dest,
-    const char *src,
-    const char *setting) {
-
-  if (strlen(src) > MAX_STRING_LENGTH) {
-    LOG_Warning("Setting \"%s\" truncated.\n", setting);
-    strncpy(dest, src, MAX_STRING_LENGTH);
-    dest[MAX_STRING_LENGTH] = '\0';
+  if (font_size_kw == k_large) {
+    font_size = f_large;
+  } else if (font_size_kw == k_medium) {
+    font_size = f_medium;
   } else {
-    strcpy(dest, src);
+    font_size = f_small;
   }
-}
-
-
-static int integer(const char *string) {
-  return (int) strtol(string, NULL, 10);
+  if (attribute == k_file) {
+    set_font_file_name(font_size, value);
+  } else if (attribute == k_size) {
+    set_font_size(font_size, value);
+  }
+  return TRUE;
 }
 
 

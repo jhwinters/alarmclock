@@ -9,6 +9,8 @@
 #include "global.h"
 #include "logging.h"
 #include "linklist.h"
+#include "utils.h"
 #include "alarms.h"
+#include "fonts.h"
 #include "settings.h"
 
