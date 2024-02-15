@@ -13,7 +13,7 @@ clean:
 	-rm -f *.o clock
 
 clock: $(OBJS) $(LIBS)
-	gcc -o clock $(OBJS) -L../spirit/library -lspirit -lyaml
+	gcc -o clock $(OBJS) -L../spirit/library -lspirit -lyaml -lSDL2 -lSDL2_ttf
 # DO NOT DELETE
 
 alarms.o: includes.h ../spirit/include/global.h ../spirit/include/logging.h

@@ -3,9 +3,13 @@
 #include <string.h>
 #define __USE_XOPEN
 #include <time.h>
+#include <assert.h>
+#include <unistd.h>
 #include <yaml.h>
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include "global.h"
 #include "logging.h"
 #include "linklist.h"

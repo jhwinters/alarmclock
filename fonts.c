@@ -2,6 +2,7 @@
 #include "includes.h"
 
 #define MAX_FILENAME_LEN 256
+#define NUM_FONTS 3
 
 /*
  *================================================================
@@ -30,6 +31,8 @@ static t_font_record fonts[NUM_FONTS] = {
   {"/usr/share/fonts/truetype/freefont/FreeSans.ttf",             32}
 };
 
+static TTF_Font *font_handles[NUM_FONTS];
+
 /*
  *================================================================
  *
@@ -37,6 +40,17 @@ static t_font_record fonts[NUM_FONTS] = {
  *
  *================================================================
  */
+
+void init_fonts(void) {
+  int i;
+
+  for (i = 0; i < NUM_FONTS; i++) {
+    font_handles[i] = TTF_OpenFont(fonts[i].file_name, fonts[i].size);
+    if (font_handles[i] == NULL) {
+      LOG_Error("Failed to open font \"%s\".\n", fonts[i].file_name);
+    }
+  }
+}
 
 void set_font_file_name(
   t_font_size        which_font,
@@ -67,6 +81,31 @@ void set_font_size(
     target = fonts + which_font;
     target->size = integer((const char *) size_str);
   }
+}
+
+t_box size_text(
+    t_font_size  which_font,
+    const char  *text) {
+
+  t_box result = {0, 0};
+
+  TTF_SizeText(
+    font_handles[which_font],
+    text,
+    &result.width,
+    &result.height);
+  return result;
+}
+
+
+SDL_Surface *render_font(
+    t_font_size  which_font,
+    const char  *text,
+    SDL_Color    colour) {
+
+  return TTF_RenderText_Solid(font_handles[which_font],
+                              text,
+                              colour);
 }
 
 
