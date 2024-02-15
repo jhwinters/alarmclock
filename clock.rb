@@ -434,16 +434,15 @@ class MyDisplay
     when :middle
       vpos = (@height - text_height) / 2 + voff
     end
-    texture =
-      @renderer.create_texture_from(
-        font.render_solid(text, [density, density, density])
-      )
+    surface = font.render_solid(text, [density, density, density])
+    texture = @renderer.create_texture_from(surface)
     @renderer.copy(
       texture,
       nil,
       SDL2::Rect.new(hpos, vpos, text_width, text_height)
     )
     texture.destroy
+    surface.destroy
   end
 
   def do_display
