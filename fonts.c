@@ -1,4 +1,5 @@
 
+#define NEED_SDL
 #include "includes.h"
 
 #define MAX_FILENAME_LEN 256
@@ -32,6 +33,19 @@ static t_font_record fonts[NUM_FONTS] = {
 };
 
 static TTF_Font *font_handles[NUM_FONTS];
+
+/*
+ *================================================================
+ *
+ *  Forward declarations.
+ *
+ *================================================================
+ */
+
+static SDL_Surface *render_font(
+    t_font_size  which_font,
+    const char  *text,
+    SDL_Color    colour);
 
 /*
  *================================================================
@@ -98,14 +112,67 @@ t_box size_text(
 }
 
 
-SDL_Surface *render_font(
-    t_font_size  which_font,
-    const char  *text,
-    SDL_Color    colour) {
+void paint_text(
+    SDL_Renderer *renderer,
+    const char     *text,
+    t_font_size     font,
+    t_href          href,
+    t_vref          vref,
+    int             hoff,
+    int             voff,
+    int             density) {
 
-  return TTF_RenderText_Solid(font_handles[which_font],
-                              text,
-                              colour);
+  t_box        box;
+  SDL_Color    colour;
+  int          hpos;
+  int          vpos;
+  SDL_Rect     rectangle;
+  SDL_Surface *surface;
+  SDL_Texture *texture;
+
+  box = size_text(f_large, text);
+  switch (href) {
+    case h_left:
+      hpos = hoff;
+      break;
+
+    case h_right:
+      hpos = (1024 - box.width) - hoff;
+      break;
+
+    case h_centre:
+      hpos = (1024 - box.width) / 2 + hoff;
+      break;
+  }
+  switch (vref) {
+    case v_top:
+      vpos = voff;
+      break;
+
+    case v_bottom:
+      vpos = (600 - box.height) - voff;
+      break;
+
+    case v_middle:
+      vpos = (600 - box.height) / 2 + voff;
+      break;
+
+  }
+  colour.r = density;
+  colour.g = density;
+  colour.b = density;
+  colour.a = 255;
+  surface = render_font(font, text, colour);
+  texture = SDL_CreateTextureFromSurface(
+      renderer,
+      surface);
+  rectangle.x  = hpos;
+  rectangle.y  = vpos;
+  rectangle.w  = box.width;
+  rectangle.h  = box.height;
+  SDL_RenderCopy(renderer, texture, NULL, &rectangle);
+  SDL_DestroyTexture(texture);
+  SDL_FreeSurface(surface);
 }
 
 
@@ -118,3 +185,22 @@ void dump_fonts(void) {
   LOG_Debug("  %3d %s\n", fonts[f_small].size, fonts[f_small].file_name);
 
 }
+
+/*
+ *================================================================
+ *
+ *  Local routines.
+ *
+ *================================================================
+ */
+
+static SDL_Surface *render_font(
+    t_font_size  which_font,
+    const char  *text,
+    SDL_Color    colour) {
+
+  return TTF_RenderText_Solid(font_handles[which_font],
+                              text,
+                              colour);
+}
+
