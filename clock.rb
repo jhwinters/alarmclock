@@ -7,6 +7,15 @@
 require 'sdl2'
 require 'time'
 require 'yaml'
+#
+#  We should be able to include less but I can't find any documentation
+#  specifying the heirarchy and thus what I need to require in order
+#  to be able to require active_support/duration and close friends.
+#
+#  Having used the time extensions in RoR it's very hard to go back to
+#  working without them.
+#
+require 'active_support/all'
 
 class Despatcher
   #
@@ -40,19 +49,110 @@ class Despatcher
 
   def despatch
     puts "Despatch starting"
+    got_something = false
     while true
       event = SDL2::Event.poll
       if event
+        got_something = true
         puts event.inspect
+      else
+        got_something = false
       end
       @requests.each do |request|
         if request.type === event
           request.recipient.handle_event(event)
         end
       end
-      sleep(0.1)
+      unless got_something
+        sleep(0.25)
+      end
     end
   end
+end
+
+class Alarmer
+  #
+  #  An object which can provide you with callbacks after various kinds of
+  #  delay or at a nominated time.  Note that they might arrive late but they
+  #  will arrive.
+  #
+
+  class Alarm
+    #
+    #  An object to hold an individual schedule item.
+    #
+    attr_reader :at_when, :receiver, :reference, :interval, :recurring
+
+    def initialize(receiver, reference, at_when, interval = 10.seconds, recurring = false)
+      @receiver  = receiver
+      @reference = reference
+      @at_when   = at_when
+      @interval  = interval
+      @recurring = recurring
+      puts "Alarm at #{at_when}"
+    end
+
+    def defer(interval)
+      @at_when += interval
+    end
+
+  end
+
+  def initialize(despatcher)
+    @alarms = []
+    @earliest_alarm = nil
+    despatcher.register(nil, self)
+  end
+
+  #
+  #  A function to receive raw "nil" events from the despatcher.
+  #
+  def handle_event(event)
+    now = Time.now
+    if @earliest_alarm && (now >= @earliest_alarm)
+      #
+      #  Time to do some work.
+      #
+      alarm = @alarms.shift
+      alarm.receiver.handle_event(alarm)
+      if alarm.recurring
+        alarm.defer(alarm.interval)
+        @alarms << alarm
+      end
+      recalculate()
+    end
+  end
+
+  def alarm_every(receiver, reference, duration, align = false)
+    puts "In alarm_every"
+    t = Time.now
+    if align
+      t = t.change({sec: 0})
+    end
+    alarm = Alarm.new(receiver, reference, t + duration, duration, true)
+    @alarms << alarm
+    recalculate()
+  end
+
+  def alarm_after(receiver, reference, duration)
+    puts "In alarm_after"
+    alarm = Alarm.new(receiver, reference, Time.now + duration)
+    @alarms << alarm
+    recalculate()
+  end
+
+  private
+
+  def recalculate
+    if @alarms.empty?
+      @earliest_alarm = nil
+    else
+      @alarms.sort_by!(&:at_when)
+      @earliest_alarm = @alarms[0].at_when
+    end
+    puts "Earliest alarm is #{@earliest_alarm}"
+  end
+
 end
 
 class Config
@@ -361,12 +461,16 @@ class MyDisplay
   #  In other words, how far to move from touching the left edge, touching
   #  the right edge or being centred.
   #
+  #  Random means put it in a random place but still on the screen.
+  #  The random position will still be on the screen (if possible) but
+  #  if you also specify an offset then you might push it off.
+  #
   #  Likewise for vertical.
   #
   #  Sadly, plain Ruby doesn't have an enum type (although Rails adds one).
   #
-  #enum horizontal_reference: [:left, :centre, :right]
-  #enum vertical_reference: [:top, :middle, :bottom]
+  #enum horizontal_reference: [:left, :centre, :right, :random]
+  #enum vertical_reference: [:top, :middle, :bottom, :random]
   #
 
   #
@@ -400,6 +504,7 @@ class MyDisplay
 #    while SDL2::Mixer::Channels.play?(0)
 #      sleep 1
 #    end
+    @random = Random.new
   end
 
   def blank_buffer
@@ -425,6 +530,8 @@ class MyDisplay
       hpos = (@width - text_width) - hoff
     when :centre
       hpos = (@width - text_width) / 2 + hoff
+    when :random
+      hpos = @random.rand(0..(@width - text_width)) + hoff
     end
     case vref
     when :top
@@ -433,6 +540,8 @@ class MyDisplay
       vpos = (@height - text_height) - voff
     when :middle
       vpos = (@height - text_height) / 2 + voff
+    when :random
+      vpos = @random.rand(0..(@height - text_height)) + voff
     end
     surface = font.render_solid(text, [density, density, density])
     texture = @renderer.create_texture_from(surface)
@@ -479,7 +588,9 @@ class AlarmClock
     #  Whether we're showing a night-friendly dim version of the time.
     #
     @faded = false
+    puts "@faded starts as false"
     @last_touched_time = Time.now
+    @last_time_string = ""
 
     SDL2::Mixer.init(SDL2::Mixer::INIT_OGG)
     SDL2::Mixer.open(22050, SDL2::Mixer::DEFAULT_FORMAT, 2, 512)
@@ -490,10 +601,16 @@ class AlarmClock
     #
     #  What events do we need?
     #
-    despatcher.register(nil, self)  # For now until timers implemented
     despatcher.register(SDL2::Event::FingerDown, self)
+    despatcher.register(SDL2::Event::MouseButtonDown, self)
     despatcher.register(SDL2::Event::KeyDown, self)
-
+    @alarmer = Alarmer.new(despatcher)
+    @alarmer.alarm_every(self, :minute, 1.minute, true)
+    @alarmer.alarm_after(self, :fade, 3.minutes)
+    #
+    #  Initial display
+    #
+    paint_screen(Time.now, @faded)
   end
 
   def ordinalize(number)
@@ -515,36 +632,29 @@ class AlarmClock
     "#{number}#{suffix}"
   end
 
-  def handle_event(event)
-    if event
-      puts "In handle_event"
-      puts event.inspect
-    end
-    case event
-    when SDL2::Event::FingerDown
-      @last_touched_time = Time.now
-      @faded = false
-    when SDL2::Event::KeyDown
-      if event.sym == 113   # 'q'
-        exit
-      end
-    end
-    t = Time.now()
-    if t - @last_touched_time > @config.dim_delay
-      @faded = true
-    end
-    time_string = t.strftime("%H:%M")
-    date_string = t.strftime("#{ordinalize(t.day)} %B, %Y")
+  def paint_screen(now, faded = false)
+    time_string = now.strftime("%H:%M")
+    date_string = now.strftime("#{ordinalize(now.day)} %B, %Y")
+    @last_time_string = time_string
     @my_display.blank_buffer
-    @my_display.paint_text(
-      time_string,
-      @italic_font,
-      :centre,
-      :middle,
-      0,
-      @faded ? 0 : -30,
-      @faded ? 30 : 200)
-    unless @faded
+    if faded
+      @my_display.paint_text(
+        time_string,
+        @italic_font,
+        :random,
+        :random,
+        0,
+        0,
+        30)
+    else
+      @my_display.paint_text(
+        time_string,
+        @italic_font,
+        :centre,
+        :middle,
+        0,
+        -30,
+        200)
       @my_display.paint_text(
         date_string,
         @plain_font,
@@ -587,6 +697,44 @@ class AlarmClock
         200)
     end
     @my_display.do_display
+  end
+
+  def handle_event(event)
+    if event
+      puts "In handle_event"
+      puts event.class
+    end
+    do_repaint = false
+    now = Time.now
+    case event
+    when Alarmer::Alarm
+      case event.reference
+      when :minute
+        #
+        #  Time has moved on by a minute.
+        #
+        do_repaint = true
+      when :fade
+        @faded = true
+        do_repaint = true
+      end
+    when SDL2::Event::FingerDown
+    when SDL2::Event::MouseButtonDown
+      @last_touched_time = Time.now
+      if @faded
+        puts "Set @faded to false"
+        @faded = false
+        @alarmer.alarm_after(self, :fade, 3.minutes)
+        do_repaint = true
+      end
+    when SDL2::Event::KeyDown
+      if event.sym == 113   # 'q'
+        exit
+      end
+    end
+    if do_repaint
+      paint_screen(now, @faded)
+    end
     if @sounding
       unless SDL2::Mixer::Channels.play?(0)
         SDL2::Mixer.close
@@ -609,7 +757,7 @@ my_display = MyDisplay.new(config)
 puts "Creating alarm clock"
 alarm_clock = AlarmClock.new(config, my_display, despatcher)
 puts "Starting despatcher"
-#despatcher.despatch()
+despatcher.despatch()
 
 #
 #  Should not get here.
@@ -621,7 +769,7 @@ while true
     puts event.inspect
   end
   alarm_clock.handle_event(event)
-  sleep(0.1)
+  sleep(5)
   iterations += 1
   if iterations > 1000
     GC.start
